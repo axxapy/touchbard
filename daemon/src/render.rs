@@ -366,7 +366,7 @@ fn draw_item(m: &Model, p: &Painter, pal: &Palette, it: &Item, n: usize, x: f64,
             }
         }
         Kind::Workspaces => {
-            let (list, active) = m.workspaces();
+            let (list, active) = m.workspaces_for(it);
             if let Some(f) = fill {
                 p.pill(x, w, f);
             }
