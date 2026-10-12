@@ -92,6 +92,19 @@ pub enum Action {
     ToggleFlag(String),
 }
 
+/// One of a button's commands. At touch-down the state is read once and, separately for taps
+/// (no `hold_ms`) and long presses (`hold_ms`), the first entry whose `state` key is true wins;
+/// an entry without `state` is used only when no conditional entry matched.
+#[derive(Deserialize, Serialize, Clone, Debug, Default)]
+#[serde(default)]
+pub struct CmdEntry {
+    /// A boolean state key that must be true.
+    pub state: Option<String>,
+    /// A long press of this many ms; fires as soon as the time is reached.
+    pub hold_ms: Option<u64>,
+    pub command: String,
+}
+
 #[derive(Deserialize, Serialize, Clone, Debug, Default)]
 #[serde(default)]
 pub struct Item {
@@ -122,6 +135,9 @@ pub struct Item {
     /// Plugin: its name, and options passed through to it.
     pub plugin: Option<String>,
     pub options: Option<Value>,
+    /// Button: shell commands picked per press (the agent appends the item's `command` as the
+    /// last, unconditional entry). See `CmdEntry`.
+    pub commands: Vec<CmdEntry>,
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug)]

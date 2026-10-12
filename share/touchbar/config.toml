@@ -28,6 +28,12 @@
 # Tables — your own buttons:
 #   { icon = "󰈹", command = "omarchy launch browser" }
 #   { label = "Build", command = "cd ~/Projects/app && make", width = 120 }
+#   { icon = "󰄀", toggle = "recording", commands = [             # per state, tap or long press
+#       { state = "recording", command = "screenrecord stop" },  #   only while the state key is true
+#       { hold_ms = 500, command = "capture-menu" },             #   long press, fires at 500 ms
+#   ], command = "screenshot region" }                           #   plain command = the last entry
+#     At touch-down, separately for taps and long presses: the first entry whose `state` key is
+#     true wins; an entry without `state` runs only when none of those matched.
 #   { icon = "󰆏", keys = ["LeftCtrl", "C"] }          # key chord
 #   { label = "Dev", layer = "dev" }                   # go to a layer
 #   { preset = "clock", format = "%H:%M:%S" }          # tweak a preset

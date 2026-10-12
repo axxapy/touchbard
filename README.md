@@ -144,6 +144,10 @@ items = [
   "esc", "fn", "gap",
   { icon = "󰈹", command = "firefox" },
   { label = "Build", command = "cd ~/code/app && make", width = 120 },
+  { icon = "󰄀", toggle = "recording", command = "screenshot", commands = [
+      { state = "recording", command = "screenrecord stop" },   # while the state key is true
+      { hold_ms = 500, command = "capture-menu" },              # long press
+  ] },
   { icon = "󰆏", keys = ["LeftCtrl", "C"] },
   "flex", "eq", "nowplaying", "media", "gap",
   "brightness", "keyboard", "gap", "volume", "mute",
@@ -152,6 +156,8 @@ items = [
 [apps]                   # per-app layers, by window class (regex)
 "code|kitty" = "dev"
 ```
+
+`commands` picks a shell command per press: at touch-down, separately for taps and long presses (entries with `hold_ms`, fired as soon as the time is reached), the first entry whose `state` key is true wins, and an entry without `state` runs only when none of those matched. `command = "…"` is the same as one more entry at the end. Any program can set a state key over the socket: `{"t":"state","recording":true}`. Commands run with `sh -c`.
 
 `touchbar-agent --dump-layout` shows the expanded result. `touchbard --preview out.png layout.json theme.json volume=0.5 finger=scan` renders a frame to a PNG, for designing without the hardware.
 
