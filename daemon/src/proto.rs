@@ -113,6 +113,8 @@ pub struct Item {
     pub label: Option<String>,
     /// Fixed width in pixels. Items without it share the leftover space.
     pub w: Option<f64>,
+    /// Width while `toggle` is on (e.g. a recording button that also shows a timer).
+    pub w_on: Option<f64>,
     pub flex: Option<f64>,
     pub act: Option<Action>,
     pub style: Style,
@@ -138,6 +140,10 @@ pub struct Item {
     /// Button: shell commands picked per press (the agent appends the item's `command` as the
     /// last, unconditional entry). See `CmdEntry`.
     pub commands: Vec<CmdEntry>,
+    /// Button: while `toggle` is on, draw a blinking red dot and the time elapsed since the state
+    /// key `<toggle>_since` (unix seconds) instead of the icon, e.g. for a screen recording.
+    /// While `<toggle>_pending` is true (and `toggle` not yet), a steady red dot instead.
+    pub rec: bool,
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug)]
