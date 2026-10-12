@@ -1366,7 +1366,7 @@ class Agent:
     def run(self, command):
         if not command:
             return
-        subprocess.Popen(["bash", "-lc", command], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+        subprocess.Popen(["sh", "-c", command], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                          stderr=subprocess.DEVNULL, start_new_session=True)
 
     def queue_set(self, k, v):
