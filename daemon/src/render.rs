@@ -240,11 +240,31 @@ fn draw_item(m: &Model, p: &Painter, pal: &Palette, it: &Item, n: usize, x: f64,
                 rounded(c, x, MARGIN_Y, w, m.h - 2.0 * MARGIN_Y, RADIUS);
                 c.fill().unwrap();
             }
-            if m.hold_ready(n, now) {
-                // Held long enough (the long press has fired): a steady red dot.
+            let pending = it.rec && it.toggle.as_deref().is_some_and(|k| m.flag(&format!("{k}_pending")));
+            if m.hold_ready(n, now) || (pending && !on) {
+                // Held long enough (the long press has fired), or the recording is being set up
+                // (`<toggle>_pending`, e.g. while the region is selected): a steady red dot.
                 pal.red.set(c);
                 c.arc(x + w / 2.0, m.h / 2.0, 12.0, 0.0, 2.0 * PI);
                 c.fill().unwrap();
+            } else if it.rec && on {
+                // Recording: a red dot blinking every half second, and the elapsed time.
+                let unix = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default();
+                let key = format!("{}_since", it.toggle.as_deref().unwrap_or(""));
+                let secs = m.num(&key).map_or(0, |s| (unix.as_secs_f64() - s).max(0.0) as u64);
+                let time = format!("{}:{:02}", secs / 60, secs % 60);
+                let tw = p.text_width(&time, LABEL_PX, true);
+                let (r, gap) = (9.0, 12.0);
+                let left = x + (w - (2.0 * r + gap + tw)) / 2.0;
+                if (unix.as_millis() / 500) % 2 == 0 {
+                    pal.red.set(c);
+                    c.arc(left + r, m.h / 2.0, r, 0.0, 2.0 * PI);
+                    c.fill().unwrap();
+                }
+                ink.set(c);
+                p.text(&time, LABEL_PX, true, left + 2.0 * r + gap + tw / 2.0, m.h / 2.0, None);
             } else {
                 let icon = if on { it.icon_on.as_deref().or(it.icon.as_deref()) } else { it.icon.as_deref() };
                 let label = if on { it.label_on.as_deref().or(it.label.as_deref()) } else { it.label.as_deref() };

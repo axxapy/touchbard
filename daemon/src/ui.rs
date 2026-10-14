@@ -749,6 +749,11 @@ impl Model {
             .count()
     }
 
+    /// A recording indicator (`rec` button with its toggle on) is showing: redraw twice a second.
+    pub fn rec_active(&self) -> bool {
+        self.items().iter().any(|it| it.rec && it.toggle.as_deref().is_some_and(|k| self.flag(k)))
+    }
+
     /// True while something on screen is moving and needs frames.
     pub fn animating(&self, now: Instant) -> bool {
         self.finger.state != FingerState::Idle
@@ -825,7 +830,13 @@ impl Model {
         let widths: Vec<_> = self
             .items()
             .iter()
-            .map(|i| (i.w, i.flex.unwrap_or(1.0)))
+            .map(|i| {
+                // `w_on`: a different width while the item's toggle is on (or pending, for `rec`).
+                let on = i.toggle.as_deref().is_some_and(|k| {
+                    self.flag(k) || (i.rec && self.flag(&format!("{k}_pending")))
+                });
+                (if on { i.w_on.or(i.w) } else { i.w }, i.flex.unwrap_or(1.0))
+            })
             .collect();
         self.lay_out(&widths)
     }

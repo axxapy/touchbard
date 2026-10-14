@@ -194,6 +194,7 @@ fn run() -> Result<()> {
     let mut last_activity = Instant::now();
     let mut lid_closed = false;
     let mut last_minute = chrono::Local::now().format("%H%M").to_string();
+    let mut last_half: u128 = 0;
     let mut last_holds = 0usize;
     let mut swallowed: HashSet<u32> = HashSet::new();
     let mut digitizer: Option<input::Device> = None;
@@ -243,6 +244,17 @@ fn run() -> Result<()> {
             last_specs = Some(specs);
         }
 
+        // Recording indicator: redraw on each half second (blinking dot, ticking timer).
+        let rec_on = model.rec_active();
+        let unix_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_millis());
+        let half = if rec_on { unix_ms / 500 } else { 0 };
+        if half != last_half {
+            last_half = half;
+            dirty = true;
+        }
+
         // A held button just passed its long-press time: redraw to show it.
         let holds = model.holds_ready(now);
         if holds != last_holds {
@@ -272,6 +284,9 @@ fn run() -> Result<()> {
         let mut deadline = model.next_deadline(now).unwrap_or(now + Duration::from_secs(5));
         if dirty {
             deadline = deadline.min(frame_due.max(now));
+        }
+        if rec_on {
+            deadline = deadline.min(now + Duration::from_millis((500 - unix_ms % 500) as u64 + 5));
         }
         let secs_left = 60 - chrono::Timelike::second(&chrono::Local::now()) as u64;
         deadline = deadline.min(now + Duration::from_secs(secs_left.max(1)));
