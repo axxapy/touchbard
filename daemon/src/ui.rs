@@ -378,6 +378,16 @@ impl Model {
         (list, active)
     }
 
+    /// The workspaces an item shows: all of them, or only the active one with `format = "active"`.
+    pub fn workspaces_for(&self, item: &Item) -> (Vec<(i64, i64)>, i64) {
+        let (list, active) = self.workspaces();
+        if item.format.as_deref() == Some("active") {
+            let w = list.iter().find(|(id, _)| *id == active).map(|(_, w)| *w).unwrap_or(0);
+            return (vec![(active, w)], active);
+        }
+        (list, active)
+    }
+
     // ---- spectrum and frames -----------------------------------------------
 
     pub fn set_bars(&mut self, v: Vec<f32>) {
@@ -826,7 +836,7 @@ impl Model {
     pub fn sub_rects(&self, item: &Item, x: f64, w: f64) -> Vec<(f64, f64)> {
         let n = match item.kind {
             Kind::Media => 3,
-            Kind::Workspaces => self.workspaces().0.len().max(1),
+            Kind::Workspaces => self.workspaces_for(item).0.len().max(1),
             _ => 1,
         };
         let seg = w / n as f64;
@@ -965,7 +975,7 @@ impl Model {
                 } else {
                     // A workspace: fill `{id}` into the item's command.
                     self.press(hit, true);
-                    let (list, _) = self.workspaces();
+                    let (list, _) = self.workspaces_for(&item);
                     let id = list.get(part as usize).map(|(id, _)| *id).unwrap_or(1);
                     let act = match item.act {
                         Some(Action::Cmd(c)) => Some(Action::Cmd(c.replace("{id}", &id.to_string()))),
