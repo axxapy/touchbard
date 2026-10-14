@@ -194,6 +194,7 @@ fn run() -> Result<()> {
     let mut last_activity = Instant::now();
     let mut lid_closed = false;
     let mut last_minute = chrono::Local::now().format("%H%M").to_string();
+    let mut last_holds = 0usize;
     let mut swallowed: HashSet<u32> = HashSet::new();
     let mut digitizer: Option<input::Device> = None;
     // Finger positions, drawn into recordings only.
@@ -240,6 +241,13 @@ fn run() -> Result<()> {
         if last_specs.as_ref() != Some(&specs) {
             send_all(&mut clients, &Outgoing::Surfaces { list: specs.clone() });
             last_specs = Some(specs);
+        }
+
+        // A held button just passed its long-press time: redraw to show it.
+        let holds = model.holds_ready(now);
+        if holds != last_holds {
+            last_holds = holds;
+            dirty = true;
         }
 
         let frame_wanted = dirty || model.animating(now);
@@ -290,6 +298,7 @@ fn run() -> Result<()> {
         unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as _, timeout) };
 
         let mut effects: Vec<Effect> = vec![];
+        effects.extend(model.fire_holds(Instant::now()));   // long presses fire at their threshold
 
         // ---- input ----
         tb_input.dispatch()?;

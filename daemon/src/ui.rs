@@ -77,7 +77,16 @@ pub enum Hit {
 
 enum Grab {
     /// A button: keys held, or an action that fires on release.
-    Press { hit: Hit, keys: Vec<Key>, act: Option<Action>, inside: bool, tap: Option<(String, f64)> },
+    Press {
+        hit: Hit,
+        keys: Vec<Key>,
+        act: Option<Action>,
+        inside: bool,
+        tap: Option<(String, f64)>,
+        /// Long-press action, when the press started, how long counts as a hold, and whether
+        /// it already fired (it fires as soon as the time is reached, not on release).
+        hold: Option<(Action, Instant, Duration, bool)>,
+    },
     /// Dragging straight from a collapsed slider button, macOS style.
     SliderDrag { start_x: f64, start_v: f64, moved: bool },
     /// Dragging along the expanded slider's track.
@@ -696,6 +705,50 @@ impl Model {
         changed
     }
 
+    /// Item `n` is being held past its long-press time: its hold action has run (or runs now).
+    pub fn hold_ready(&self, n: usize, now: Instant) -> bool {
+        self.grabs.values().any(|g| {
+            matches!(g, Grab::Press { hit: Hit::Item(i), inside: true, hold: Some((_, since, d, _)), .. }
+                if *i == n && now.duration_since(*since) >= *d)
+        })
+    }
+
+    /// The command a press runs: among taps (`hold` false) or long presses (`hold` true), the
+    /// first entry whose state key is true, else the first one without a state.
+    fn pick_command<'a>(&self, list: &'a [CmdEntry], hold: bool) -> Option<&'a CmdEntry> {
+        let mut kind = list.iter().filter(|e| e.hold_ms.is_some() == hold);
+        kind.clone()
+            .find(|e| e.state.as_deref().is_some_and(|k| self.flag(k)))
+            .or_else(|| kind.find(|e| e.state.is_none()))
+    }
+
+    /// Long presses fire as soon as they are held long enough (not on release).
+    pub fn fire_holds(&mut self, now: Instant) -> Vec<Effect> {
+        let mut fx = vec![];
+        for g in self.grabs.values_mut() {
+            if let Grab::Press { inside: true, hold: Some((act, since, d, fired)), .. } = g {
+                if !*fired && now.duration_since(*since) >= *d {
+                    *fired = true;
+                    if let Action::Cmd(cmd) = act {
+                        fx.push(Effect::Send(Outgoing::Run { cmd: cmd.clone() }));
+                    }
+                }
+            }
+        }
+        fx
+    }
+
+    /// How many presses are past their long-press time (a change means: redraw).
+    pub fn holds_ready(&self, now: Instant) -> usize {
+        self.grabs
+            .values()
+            .filter(|g| {
+                matches!(g, Grab::Press { inside: true, hold: Some((_, since, d, _)), .. }
+                    if now.duration_since(*since) >= *d)
+            })
+            .count()
+    }
+
     /// True while something on screen is moving and needs frames.
     pub fn animating(&self, now: Instant) -> bool {
         self.finger.state != FingerState::Idle
@@ -728,6 +781,14 @@ impl Model {
         }
         if self.animating(now) {
             take(now + Duration::from_millis(33));
+        }
+        // Wake up when a held button reaches its long-press time, to show that it did.
+        for g in self.grabs.values() {
+            if let Grab::Press { hold: Some((_, since, dur, false)), .. } = g {
+                if *since + *dur > now {
+                    take(*since + *dur);
+                }
+            }
         }
         d
     }
@@ -906,7 +967,7 @@ impl Model {
     fn key_press(&mut self, hit: Hit, key: Key, fx: &mut Vec<Effect>) -> Grab {
         self.press(hit, true);
         fx.push(Effect::KeyDown(vec![key]));
-        Grab::Press { hit, keys: vec![key], act: None, inside: true, tap: None }
+        Grab::Press { hit, keys: vec![key], act: None, inside: true, tap: None, hold: None }
     }
 
     pub fn touch_down(&mut self, slot: u32, x: f64) -> Vec<Effect> {
@@ -945,14 +1006,14 @@ impl Model {
                     let step = if p == Part::Low { -SLIDER_STEP } else { SLIDER_STEP };
                     fx.push(self.set_value(&key, cur + step));
                 }
-                Grab::Press { hit, keys: vec![], act: None, inside: true, tap: None }
+                Grab::Press { hit, keys: vec![], act: None, inside: true, tap: None, hold: None }
             }
             Hit::Overlay(Part::Viz) if self.sync_open.is_some() && self.sync_parts().iter().any(|(_, px, pw)| x >= *px && x < px + pw) => {
                 let id = self.sync_parts().into_iter().find(|(_, px, pw)| x >= *px && x < px + pw).map(|p| p.0).unwrap_or(0);
                 self.sync_open = Some(now);
                 let hit = Hit::Sync(id);
                 self.press(hit, true);
-                Grab::Press { hit, keys: vec![], act: None, inside: true, tap: None }
+                Grab::Press { hit, keys: vec![], act: None, inside: true, tap: None, hold: None }
             }
             Hit::Overlay(Part::Viz) if self.viz.as_ref().is_some_and(|v| v.volume.is_some()) => {
                 fx.push(self.set_volume_at(x));
@@ -964,7 +1025,7 @@ impl Model {
             Hit::Overlay(Part::Next) => self.key_press(hit, Key::NextSong, &mut fx),
             Hit::Overlay(Part::Close | Part::Preset | Part::Mode | Part::Colors | Part::Font | Part::Karaoke | Part::Volume) => {
                 self.press(hit, true);
-                Grab::Press { hit, keys: vec![], act: None, inside: true, tap: None }
+                Grab::Press { hit, keys: vec![], act: None, inside: true, tap: None, hold: None }
             }
             Hit::Overlay(_) | Hit::Sync(_) => Grab::Ignore,
             Hit::Sub(n, part) => {
@@ -977,11 +1038,12 @@ impl Model {
                     self.press(hit, true);
                     let (list, _) = self.workspaces_for(&item);
                     let id = list.get(part as usize).map(|(id, _)| *id).unwrap_or(1);
-                    let act = match item.act {
+                    let act = self.pick_command(&item.commands, false).map(|e| Action::Cmd(e.command.clone()));
+                    let act = match act.or_else(|| item.act.clone()) {
                         Some(Action::Cmd(c)) => Some(Action::Cmd(c.replace("{id}", &id.to_string()))),
                         other => other,
                     };
-                    Grab::Press { hit, keys: vec![], act, inside: true, tap: None }
+                    Grab::Press { hit, keys: vec![], act, inside: true, tap: None, hold: None }
                 }
             }
             Hit::Item(n) => {
@@ -1000,18 +1062,28 @@ impl Model {
                     self.press(hit, true);
                     // A plugin with no action of its own gets the tap, in its own coordinates.
                     let tap = match (&item.kind, &item.plugin, &item.act) {
-                        (Kind::Plugin, Some(id), None) => {
+                        (Kind::Plugin, Some(id), None) if item.commands.is_empty() => {
                             let rx = self.item_rects().get(n).map(|r| r.0).unwrap_or(0.0);
                             Some((id.clone(), x - rx))
                         }
                         _ => None,
                     };
-                    match item.act {
+                    let act = self
+                        .pick_command(&item.commands, false)
+                        .map(|e| Action::Cmd(e.command.clone()))
+                        .or_else(|| item.act.clone());
+                    match act {
                         Some(Action::Key(keys)) => {
                             fx.push(Effect::KeyDown(keys.clone()));
-                            Grab::Press { hit, keys, act: None, inside: true, tap }
+                            Grab::Press { hit, keys, act: None, inside: true, tap, hold: None }
                         }
-                        act => Grab::Press { hit, keys: vec![], act, inside: true, tap },
+                        act => {
+                            let hold = self.pick_command(&item.commands, true).map(|e| {
+                                let ms = e.hold_ms.unwrap_or(800);
+                                (Action::Cmd(e.command.clone()), now, Duration::from_millis(ms), false)
+                            });
+                            Grab::Press { hit, keys: vec![], act, inside: true, tap, hold }
+                        }
                     }
                 }
             }
@@ -1086,7 +1158,7 @@ impl Model {
             s.last_touch = now;
         }
         match self.grabs.remove(&slot) {
-            Some(Grab::Press { hit, keys, act, inside, tap }) => {
+            Some(Grab::Press { hit, keys, act, inside, tap, hold }) => {
                 self.press(hit, false);
                 if !keys.is_empty() && inside {
                     fx.push(Effect::KeyUp(keys));
@@ -1143,6 +1215,13 @@ impl Model {
                         }
                         _ => {}
                     }
+                    // A long press already ran its action when the time was reached: the release
+                    // does nothing. (Released exactly at the threshold, before it fired: run it now.)
+                    let act = match hold {
+                        Some((_, _, _, true)) => None,
+                        Some((h, since, d, false)) if now.duration_since(since) >= d => Some(h),
+                        _ => act,
+                    };
                     match act {
                         Some(Action::Cmd(cmd)) => fx.push(Effect::Send(Outgoing::Run { cmd })),
                         Some(Action::Layer(l)) => fx.extend(self.switch_layer(&l)),
@@ -1221,5 +1300,63 @@ impl Model {
             }
         }
         fx
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn model(state: &[(&str, bool)]) -> Model {
+        let layout = Layout {
+            layers: HashMap::new(),
+            default: "main".into(),
+            fn_layer: None,
+            settings: Settings::default(),
+        };
+        let mut m = Model::new(2008.0, 60.0, Theme::default(), layout);
+        m.update_state(state.iter().map(|(k, v)| (k.to_string(), Value::from(*v))).collect());
+        m
+    }
+
+    fn entry(state: Option<&str>, hold_ms: Option<u64>, command: &str) -> CmdEntry {
+        CmdEntry { state: state.map(String::from), hold_ms, command: command.into() }
+    }
+
+    fn pick(m: &Model, list: &[CmdEntry], hold: bool) -> Option<String> {
+        m.pick_command(list, hold).map(|e| e.command.clone())
+    }
+
+    #[test]
+    fn conditional_entries_win_over_unconditional_ones_in_any_order() {
+        let list = [
+            entry(None, None, "shot"),
+            entry(Some("recording"), None, "stop"),
+            entry(Some("other"), None, "never"),
+            entry(None, Some(500), "menu"),
+        ];
+        let idle = model(&[("recording", false)]);
+        assert_eq!(pick(&idle, &list, false).as_deref(), Some("shot"));
+        assert_eq!(pick(&idle, &list, true).as_deref(), Some("menu"));
+        let rec = model(&[("recording", true)]);
+        assert_eq!(pick(&rec, &list, false).as_deref(), Some("stop"));
+        assert_eq!(pick(&rec, &list, true).as_deref(), Some("menu"));
+    }
+
+    #[test]
+    fn first_match_wins_and_no_match_means_nothing() {
+        let list = [
+            entry(Some("a"), None, "a1"),
+            entry(Some("b"), None, "b"),
+            entry(Some("a"), None, "a2"),
+            entry(None, Some(300), "hold1"),
+            entry(None, Some(900), "hold2"),
+        ];
+        let m = model(&[("a", true), ("b", true)]);
+        assert_eq!(pick(&m, &list, false).as_deref(), Some("a1"));
+        assert_eq!(pick(&m, &list, true).as_deref(), Some("hold1"));
+        let none = model(&[]);
+        assert_eq!(pick(&none, &list, false), None);   // only conditional taps, none true
+        assert_eq!(pick(&none, &[], true), None);
     }
 }

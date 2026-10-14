@@ -240,9 +240,16 @@ fn draw_item(m: &Model, p: &Painter, pal: &Palette, it: &Item, n: usize, x: f64,
                 rounded(c, x, MARGIN_Y, w, m.h - 2.0 * MARGIN_Y, RADIUS);
                 c.fill().unwrap();
             }
-            let icon = if on { it.icon_on.as_deref().or(it.icon.as_deref()) } else { it.icon.as_deref() };
-            let label = if on { it.label_on.as_deref().or(it.label.as_deref()) } else { it.label.as_deref() };
-            p.content(icon, label, x, w, ink);
+            if m.hold_ready(n, now) {
+                // Held long enough (the long press has fired): a steady red dot.
+                pal.red.set(c);
+                c.arc(x + w / 2.0, m.h / 2.0, 12.0, 0.0, 2.0 * PI);
+                c.fill().unwrap();
+            } else {
+                let icon = if on { it.icon_on.as_deref().or(it.icon.as_deref()) } else { it.icon.as_deref() };
+                let label = if on { it.label_on.as_deref().or(it.label.as_deref()) } else { it.label.as_deref() };
+                p.content(icon, label, x, w, ink);
+            }
         }
         Kind::Slider => {
             let key = it.target.as_deref().unwrap_or("");

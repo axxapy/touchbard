@@ -158,8 +158,18 @@ def expand_item(entry):
     if "preset" in e:
         base = expand_item(e.pop("preset"))
     # Friendly spellings for actions.
-    if "command" in e:
-        e["act"] = {"cmd": e.pop("command")}
+    # `commands`: [{state?, hold_ms?, command}], see CmdEntry in the daemon. A plain `command`
+    # is the same as one more entry at the end: commands + [{command = …}].
+    if "commands" in e or "command" in e:
+        cmds = e.pop("commands", [])
+        if not isinstance(cmds, list):
+            raise ValueError(f"commands must be an array of tables: {cmds!r}")
+        for c in cmds:
+            if not isinstance(c, dict) or not isinstance(c.get("command"), str):
+                raise ValueError(f"bad commands entry {c!r}: needs command = \"…\"")
+        if "command" in e:
+            cmds = cmds + [{"command": e.pop("command")}]
+        e["commands"] = cmds
     if "keys" in e:
         k = e.pop("keys")
         e["act"] = {"key": k if isinstance(k, list) else [k]}
