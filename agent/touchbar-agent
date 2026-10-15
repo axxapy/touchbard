@@ -1813,6 +1813,31 @@ class Agent:
             return
         self.system.signal_subscribe("net.reactivated.Fprint", "net.reactivated.Fprint.Device", None, None,
                                      None, Gio.DBusSignalFlags.NONE, self.on_finger)
+        self.start_battery_watch()
+
+    def start_battery_watch(self):
+        # The battery comes from UPower's DisplayDevice, which upowerd already polls and announces on
+        # change, so the daemon never has to read power_supply sysfs per frame (expensive on some
+        # laptops: on Intel T2 Macs each read is an SBS transaction through the EC).
+        try:
+            self.upower = Gio.DBusProxy.new_sync(
+                self.system, Gio.DBusProxyFlags.NONE, None, "org.freedesktop.UPower",
+                "/org/freedesktop/UPower/devices/DisplayDevice", "org.freedesktop.UPower.Device", None)
+        except GLib.Error as e:
+            log(f"upower: {e.message}")
+            return
+        self.upower.connect("g-properties-changed", lambda *_: self.push_battery())
+        self.push_battery()
+
+    def push_battery(self):
+        def prop(name):
+            v = self.upower.get_cached_property(name)
+            return v.unpack() if v is not None else None
+        pct, state = prop("Percentage"), prop("State")
+        if not prop("IsPresent") or pct is None:
+            return  # no battery, or upowerd not running: the daemon reads sysfs itself
+        # UPower states: 1 charging, 4 fully charged (the daemon showed "Full" as charging too).
+        self.push_state(battery=round(pct, 1), battery_charging=state in (1, 4))
 
     def on_finger(self, conn, sender, path, iface, signal, params):
         if signal == "VerifyFingerSelected":
