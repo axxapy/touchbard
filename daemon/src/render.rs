@@ -7,7 +7,8 @@ use cairo::{Context, LinearGradient};
 use chrono::Local;
 use std::f64::consts::PI;
 use std::fs;
-use std::time::Instant;
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 const MARGIN_Y: f64 = 2.0;
 const RADIUS: f64 = 9.0;
@@ -173,7 +174,27 @@ fn level_icon<'a>(icons: &'a [String], v: f64) -> Option<&'a str> {
     Some(icons[i].as_str())
 }
 
-fn battery() -> Option<(f64, bool)> {
+/// Battery level (0..=100) and whether it is charging. The agent sends both from UPower
+/// (`battery`, `battery_charging`) whenever they change. Without an agent, sysfs is read at most
+/// once a minute: reading power_supply files is not free (on Intel T2 Macs every read is an ACPI
+/// SBS transaction through the EC, 100+ EC interrupts each), and the bar redraws every second.
+fn battery(m: &Model) -> Option<(f64, bool)> {
+    if let Some(cap) = m.num("battery") {
+        return Some((cap, m.flag("battery_charging")));
+    }
+    static CACHE: Mutex<Option<(Instant, Option<(f64, bool)>)>> = Mutex::new(None);
+    let mut cache = CACHE.lock().unwrap();
+    match *cache {
+        Some((at, v)) if at.elapsed() < Duration::from_secs(60) => v,
+        _ => {
+            let v = battery_sysfs();
+            *cache = Some((Instant::now(), v));
+            v
+        }
+    }
+}
+
+fn battery_sysfs() -> Option<(f64, bool)> {
     for e in fs::read_dir("/sys/class/power_supply").ok()?.flatten() {
         let p = e.path();
         if fs::read_to_string(p.join("type")).ok()?.trim() != "Battery" {
@@ -474,7 +495,7 @@ fn draw_item(m: &Model, p: &Painter, pal: &Palette, it: &Item, n: usize, x: f64,
             if let Some(f) = fill {
                 p.pill(x, w, with_press(f));
             }
-            let Some((cap, charging)) = battery() else { return };
+            let Some((cap, charging)) = battery(m) else { return };
             let glyphs = ["󰂎", "󰁺", "󰁻", "󰁼", "󰁽", "󰁾", "󰁿", "󰂀", "󰂁", "󰂂", "󰁹"];
             let icon = if charging { "󰂄" } else { glyphs[((cap / 10.0).round() as usize).min(10)] };
             let color = if charging {

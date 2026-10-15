@@ -540,6 +540,9 @@ fn run() -> Result<()> {
         }
         if agent_gone && !clients.iter().any(|c| c.is_agent) {
             effects.extend(model.set_layout(fallback::layout()));
+            // Battery values came from the agent: fall back to reading sysfs.
+            model.state.remove("battery");
+            model.state.remove("battery_charging");
             model.set_finger(FingerState::Idle);
             dirty = true;
         }
