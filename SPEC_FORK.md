@@ -15,20 +15,22 @@
 | `feature/button-commands`       | `main`                    | `715868a`                                                |
 | `feature/button-rec`            | `feature/button-commands` | `0406117` (the indicator sits on the per-state commands) |
 | `feature/agent-sh-commands`     | `main`                    | `510dc0d`                                                |
+| `feature/battery-from-upower`   | `main`                    | `a59c304`                                                |
 
 New work: branch `feature/<name>` off `main` (or off the feature it needs), then merge it into `dev/axp` with `git merge --no-ff`. Install from `dev/axp`. Upstream PRs are made from the `feature/*` branches.
 
 ## Summary
 
-| Commit    | Area             | Change                                                                                  | Upstream status                     |
-| --------- | ---------------- | --------------------------------------------------------------------------------------- | ----------------------------------- |
-| `7d28150` | agent            | Keyboard backlight found on Intel T2 Macs (`apple::kbd_backlight`)                      | offered in PR #1                    |
-| `b83fbb3` | daemon / hw      | Touch Bar backlight scaled to the device range (Intel T2: 0..=2)                        | offered in PR #1                    |
-| `bc5db4b` | daemon / render  | Battery percentage = charge now ÷ full                                                  | offered in PR #1                    |
-| `6eed8cc` | daemon           | Workspaces item: `format = "active"`                                                    | fork only                           |
-| `715868a` | daemon + agent   | `commands`: per-state tap and long-press commands                                       | fork only                           |
-| `0406117` | daemon           | Recording indicator (`rec`) and toggle width (`w_on`)                                   | fork only                           |
-| `510dc0d` | agent            | Button commands run with `sh -c` instead of `bash -lc`                                  | fork only                           |
+| Commit    | Area            | Change                                                                    | Upstream status  |
+| --------- | --------------- | ------------------------------------------------------------------------- | ---------------- |
+| `7d28150` | agent           | Keyboard backlight found on Intel T2 Macs (`apple::kbd_backlight`)        | offered in PR #1 |
+| `b83fbb3` | daemon / hw     | Touch Bar backlight scaled to the device range (Intel T2: 0..=2)          | offered in PR #1 |
+| `bc5db4b` | daemon / render | Battery percentage = charge now ÷ full                                    | offered in PR #1 |
+| `6eed8cc` | daemon          | Workspaces item: `format = "active"`                                      | fork only        |
+| `715868a` | daemon + agent  | `commands`: per-state tap and long-press commands                         | fork only        |
+| `0406117` | daemon          | Recording indicator (`rec`) and toggle width (`w_on`)                     | fork only        |
+| `510dc0d` | agent           | Button commands run with `sh -c` instead of `bash -lc`                    | fork only        |
+| `a59c304` | agent + daemon  | Battery from UPower via the agent; daemon no longer reads sysfs per frame | fork only        |
 
 ## Intel T2 fixes
 
@@ -110,3 +112,12 @@ Not part of the daemon, a convention between the user's scripts and the config: 
 ## Tests
 
 `cargo test` in `daemon/` runs the unit tests for the `commands` matching rules (`ui::tests`). Upstream has no tests.
+
+## Battery from UPower
+
+The daemon used to read `/sys/class/power_supply` on every redraw of the battery item. On Intel T2 Macs each read is an ACPI SBS transaction through the EC (100+ EC interrupts per read; measured 2026-10-13), and the bar redraws every second for the clock, so the battery item alone kept the EC busy.
+
+- **Agent:** watches UPower's `DisplayDevice` (`org.freedesktop.UPower.Device`) on the system bus and sends `battery` (0..=100, UPower `Percentage`) and `battery_charging` (UPower `State` 1 charging or 4 fully charged) in its `state` message whenever UPower announces a change (upowerd polls every 30 s). No UPower or no battery: nothing is sent.
+- **Daemon:** draws the battery from those state keys. Without them (no agent, or no UPower) it reads sysfs at most once a minute. When the last agent disconnects, both keys are dropped so it falls back to sysfs.
+- UPower's `Percentage` is energy (charge) now ÷ full, the same value `feature/t2-battery-charge` computes from sysfs, so the two sources agree.
+
